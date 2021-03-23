@@ -1,0 +1,116 @@
+---
+title: "异常值检测-打标签代码"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+setwd("D:/狗熊会/异常值检测代码整理/异常值检测")
+```
+
+&emsp;&emsp;输入：（1）建模输出数据_data_set.csv（待打标签的数据）；（2）建模输出数据_outlier_all_index.csv（异常观测key）；（3）建模输出数据_outlier_space_index.csv（空间异常观测key）。
+
+&emsp;&emsp;输出：打标签输出数据_data_set_label.csv（打好标签的数据）。
+
+
+### 0. 准备工作
+```{r warning=FALSE,message=FALSE}
+# 清理工作空间
+rm(list=ls())
+```
+
+### 1. 读入数据
+```{r warning=FALSE,message=FALSE}
+# 读取数据
+data_set <- read.csv('data_set.csv')
+temp_outlier_all <- read.csv('建模输出数据_outlier_all_index.csv')
+temp_outlier_space <- read.csv('建模输出数据_outlier_space_index.csv')
+```
+
+### 2. 提取存在异常值的观测 
+```{r warning=FALSE,message=FALSE}
+temp_outlier_all <- as.character(temp_outlier_all$x)       # 将temp_outlier_all$x由"factor"类型转为"character"类型
+temp_outlier_space <- as.character(temp_outlier_space$x)   # 将temp_outlier_space$x由"factor"类型转为"character"类型
+residual_index = c(temp_outlier_space,temp_outlier_all)    # 合并temp_outlier_space和temp_outlier_all
+outlierindex = sort(unique(residual_index))                # 将residual_index去重排序，得到outlierindex，即观测是异常值的index
+# length(outlierindex)                                      
+outlierset <- subset(data_set[,c(1:19,ncol(data_set))], data_set$key %in% outlierindex) # 提取data_set中key在outlierindex中的行，1到19列和最后一列
+head(outlierset)
+```
+
+### 3. 计算异常值阈值
+```{r warning=FALSE,message=FALSE}
+#计算PM2.5浓度异常
+matrix_concentration <- matrix(nrow=2,ncol=1,0,dimnames = list(c("1%阈值","99%阈值"),"数值"))   # 构建一个2*1全0的matrix：行名是"1%阈值","99%阈值"；列名是"数值"
+matrix_concentration[,1] <- as.numeric(quantile(data_set$pm2_5,probs = c(1,99)/100,na.rm = T))  # 计算data_set$pm2_5的1%和99%分位数，并填入matrix中
+
+
+#倒挂分位数
+matrix_daogua <- matrix(nrow = 2,ncol = 1,0,dimnames = list(c("1%阈值","99%阈值"),"数值"))      # 构建一个2*1全0的matrix：行名是"1%阈值","99%阈值"；列名是"数值"
+daogua <- data_set$pm2_5/data_set$pm10                                                          # 计算data_set$pm2_5/data_set$pm10，得到daogua
+matrix_daogua[,1] <- as.numeric(quantile(daogua,probs = c(1,99)/100,na.rm = T))                 # 计算daogua的1%和99%分位数，并填入matrix中
+
+#PM2.5时间一致性
+matrix_timeconsis <- matrix(nrow=2,ncol=1,0,dimnames = list(c("1%阈值","99%阈值"),"数值"))      # 构建一个2*1全0的matrix：行名是"1%阈值","99%阈值"；列名是"数值"
+timeconsis <- data_set$pm2_5/data_set$pm2_5_lag1                                                # 计算data_set$pm2_5/data_set$pm2_5_lag1，得到timeconsis
+matrix_timeconsis[,1] <- as.numeric(quantile(timeconsis,probs = c(1,99)/100,na.rm = T))         # 计算timeconsis的1%和99%分位数，并填入matrix中
+
+#PM2.5 空间一致性
+matrix_spatioconsis <- matrix(nrow=2,ncol=1,0,dimnames = list(c("1%阈值","99%阈值"),"数值"))    # 构建一个2*1全0的matrix：行名是"1%阈值","99%阈值"；列名是"数值"
+spatioconsis <- data_set$pm2_5/data_set$pm2_5_other                                             # 计算data_set$pm2_5/data_set$pm2_5_other，得到spatioconsis
+#这里一致性 比较的是 t时刻 和其他站点t时刻的平均
+matrix_spatioconsis[,1] <- as.numeric(quantile(spatioconsis,probs = c(1,99)/100,na.rm = T))     # 计算spatioconsis的1%和99%分位数，并填入matrix中
+
+
+threshold_list = list(matrix_concentration,matrix_daogua,matrix_timeconsis,matrix_spatioconsis) # 汇总所有threshold
+threshold_list
+```
+
+### 4. 打标签
+```{r warning=FALSE,message=FALSE}
+# pm2.5浓度异常
+threshold_mx_PM2.5 <- threshold_list[[1]]                                                                                             # 提取pm2.5浓度异常threshold
+outlierset$PM2.5label <- ""                                                                                                           # outlierset新建空列PM2.5label
+outlierset$PM2.5label[which(outlierset$pm2_5 > threshold_mx_PM2.5[2] | outlierset$pm2_5  < threshold_mx_PM2.5[1])] <- "PM2.5异常"     # 若outlierset$pm2_5的值大于99%阈值或小于1%阈值，则PM2.5label设为"PM2.5异常"
+
+# 倒挂
+outlierset$daogua <- outlierset$pm2_5/outlierset$pm10                                                                             # outlierset新建一列daogua，值为outlierset$pm2_5/outlierset$pm10
+threshold_mx_daogua <- threshold_list[[2]]                                                                                        # 提取倒挂threshold
+outlierset$dglabel <- ""                                                                                                          # outlierset新建空列dglabel
+outlierset$dglabel[which(outlierset$daogua > threshold_mx_daogua[2]|outlierset$daogua < threshold_mx_daogua[1])] <- "倒挂异常"    # 若outlierset$daogua的值大于99%阈值或小于1%阈值，则dglabel设为"倒挂异常"
+
+
+# pm2.5时间一致性异常
+outlierset$timeconsis_pm25  <- outlierset$pm2_5/outlierset$pm2_5_lag1                                                                                                      # outlierset新建一列timeconsis_pm25，值为outlierset$pm2_5/outlierset$pm2_5_lag1
+threshold_mx_time_pm25 <- threshold_list[[3]]                                                                                                                              # 提取pm2.5时间一致性异常threshold
+outlierset$tclabel_pm25 <- ""                                                                                                                                              # outlierset新建空列tclabel_pm25
+outlierset$tclabel_pm25[which(outlierset$timeconsis_pm25 > threshold_mx_time_pm25[2] | outlierset$timeconsis_pm25 < threshold_mx_time_pm25[1])] <- "PM2.5时间一致性异常"   # 若outlierset$timeconsis_pm25的值大于99%阈值或小于1%阈值，则tclabel_pm25设为"PM2.5时间一致性异常"
+
+# 空间一致性 
+outlierset$spatioconsis <- outlierset$pm2_5/outlierset$pm2_5_other                         # outlierset新建一列spatioconsis，值为outlierset$pm2_5/outlierset$pm2_5_other
+outlierset$splabel <- ""                                                                   # outlierset新建空列splabel
+outlierset$splabel[which(outlierset$key %in% temp_outlier_space)]="PM2.5空间一致性异常"    # 若outlierset$key在temp_outlier_space中，则splabel设为"PM2.5空间一致性异常"
+
+
+# 其它异常标签
+outlierset$otherlabel <- ""                                                      # outlierset新建空列otherlabel
+#c(21,23,25,27)是上述四种异常情况
+index = which(apply(outlierset[,c(21,23,25,27)],1,function(x){sum(x=="")})==4)   # 提取都不属于上述四种异常值情况的index
+outlierset$otherlabel[index] <- '其他异常'                                       # 将index对应的otherlabel设为'其他异常'
+head(outlierset)
+```
+
+### 5. 合并数据集
+```{r warning=FALSE,message=FALSE}
+outlierset_select <- outlierset[c("key","PM2.5label","daogua",         
+                                  "dglabel" ,"timeconsis_pm25", "tclabel_pm25",
+                                  "spatioconsis","splabel", 
+                                  "otherlabel")]                                  # 提取outlierset中的"key","PM2.5label","daogua","dglabel" ,"timeconsis_pm25", "tclabel_pm25","spatioconsis","splabel","otherlabel"，赋值给outlierset_select
+
+data_set_label <- merge(data_set,outlierset_select,by ="key",all.x = T)                               # 通过"key"合并data_set和outlierset_select，得到data_set_label
+data_set_label <- data_set_label[order(data_set_label$station,data_set_label$time,decreasing = F),]   # data_set_label根据data_set_label$station和data_set_label$time升序排列
+
+head(data_set_label)                                                                                  # 展示data_set_label前6行
+
+write.csv(data_set_label,'打标签输出数据_data_set_label.csv',row.names = FALSE)                       # 保存data_set_label
+```
+

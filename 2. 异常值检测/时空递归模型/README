@@ -1,0 +1,5 @@
+This repo documents the data and code for the paper Time-space Recursive Model for PM2.5 Data and Its Applications on Outlier Detection
+
+* code.R -- Contains all the code to replicate this paper;
+* data_select.RData -- The air pollution data collected from 544 national controled environmental monitoring station from Jan 2015 to Dec 2018 (48 months);
+* dist_matrix.RData -- L2 distance matrix in terms of longitude and latitude of the 544 stations.

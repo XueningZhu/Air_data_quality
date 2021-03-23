@@ -1,0 +1,123 @@
+---
+title: "异常值检测-建模代码"
+output: html_document
+---
+
+&emsp;&emsp;示例数据为河北省石家庄市7个站点 (22中南校区, 高新区, 人民会堂, 世纪公园, 西北水源, 西南高教, 职工医院) 2019年9月的6类污染物数据 (PM2.5, PM10, SO2, CO, NO2, O3)。示例数据包含18列: 观测ID (id), 站点ID (station_code), 采集时间 (time), 六种污染物数据 (so2, no2, o3, co, pm10, pm2_5), 站点名称 (station), 经纬度 (lon,lat), 站点类型  (station_type), 城市 (city), 站点+时间 (key), 年份 (year), 月份 (month), 年月 (y_m)。
+
+&emsp;&emsp;输入：六种污染物数据以及其采集站点, 采集时间等。
+
+&emsp;&emsp;输出：(1)整理好待打标签的数据; (2)检测出的异常观测key。
+
+
+
+### 0. 准备工作
+
+```{r,warning=FALSE,message=FALSE}
+#清理工作空间
+rm(list=ls())
+#加载需要的包
+library(lubridate)    #日期时间数据处理
+library(MASS)         #建模
+library(dplyr)        #数据处理
+library(Hmisc)        #数据处理
+```
+
+
+### 1. 读入示例数据
+
+
+```{r,warning=FALSE}
+#读入示例数据
+data <- read.csv("建模输入数据_示例数据(石家庄2019年9月).csv")
+#展示示例数据
+head(data)
+```
+
+### 2. 数据清洗
+
+```{r}
+data_set <- data.frame()                     #汇总没有缺失的记录用于打标签 
+data_allstation_for_model = data.frame()     #建立一个数据框记录建模需要的数据
+station = unique(data$station)               #记录所有的站点
+  
+#构造一下数据，后面用所有站点一起回归，不分站点回归
+for(i in 1:length(station))
+{
+  #show(i)
+  #选定站点
+  s = station[i]
+  #取出该站点数据，存在data_model里
+  eval(parse(text = paste("data_model","=data[which(data$station=='",s,"'),]",sep = "")))
+  ##先找上一期的PM2.5，命名为 PM25_lag1
+  #先确保按时间排序正确
+  data_model = data_model[order(data_model$time),]
+  #计算PM2.5lag1
+  data_model$pm2_5_lag1 = Lag(data_model$pm2_5,+1)
+  ##构造其余站点的PM2.5同期
+  station_rest <- station[-i]
+  for(j in 1:length(station_rest))
+  {
+    #show(j)
+    s_temp = station_rest[j]
+    eval(parse(text = paste("d_temp","=data[which(data$station=='",s_temp,"'),]",sep = "")))
+    d_temp = d_temp[order(d_temp$time),]
+    #用的是其他站点pm2.5的同期
+    eval(parse(text = paste('data_model$pm_s_',j,' = as.numeric(d_temp$pm2_5)',sep = '')))
+  }
+  ####求其他各个站点的污染平均值
+  data_model$pm2_5_other = apply(data_model[,c(20:(19+length(station_rest)))],1,function(x)mean(x,na.rm = TRUE))
+    
+  #存个数据方便后面标注
+  data_set <- rbind(data_set,data_model)
+  #确认"so2","no2","o3","co","pm10","pm2_5","pm2_5_lag1","pm2_5_other"中是否有缺失值
+  r = sapply(data_model[,which(colnames(data_model) %in% c("so2","no2","o3","co","pm10","pm2_5","pm2_5_lag1","pm2_5_other"))], function(x) {1*(is.na(x))})
+  #只要有一列的数值为NA就判断为缺失
+  index = which(apply(r,1,function(x){sum(x)==0})==TRUE)
+  d_model = data_model[index,] #使用没有缺失的观测进行回归
+  #提取数据
+  d_model_complete = d_model[c("key","time","so2","no2","o3","co","pm10","pm2_5","pm2_5_lag1","pm2_5_other")]
+  #取log变换
+  for(j in c(3:10)){
+    d_model_complete[,j] <- log(d_model_complete[,j]+1)
+  }
+  #将数据汇总到一起跑回归
+  data_allstation_for_model = rbind(data_allstation_for_model,d_model_complete)
+}
+head(data_allstation_for_model)  #展示数据
+```
+
+### 3. 建模
+
+
+
+```{r}
+#建立回归模型一
+temp_model_space = lm(pm2_5~pm2_5_other,data = data_allstation_for_model)
+#建立回归模型二
+temp_model_all = lm(pm2_5~pm2_5_lag1+so2+no2+o3+co+pm10+pm2_5_other,data = data_allstation_for_model)
+#依照回归结果筛选出空间异常值点
+temp_outlier_space = data_allstation_for_model$key[which(abs(stdres(temp_model_space)) > 3)]
+#依照回归结果筛选出其他异常值点
+temp_outlier_all = data_allstation_for_model$key[which(abs(stdres(temp_model_all)) > 3)]
+#输出一：空间异常值点index
+write.csv(temp_outlier_space,"建模输出数据_outlier_space_index.csv",row.names = F)
+#输出二：其他异常值点index
+write.csv(temp_outlier_all,"建模输出数据_outlier_all_index.csv",row.names = F)
+#输出三：整理好待打标签的数据
+write.csv(data_set,"建模输出数据_data_set.csv",row.names = F)
+```
+
+### 4. 输出展示
+
+```{r}
+head(temp_outlier_space)
+head(temp_outlier_all)
+head(data_set)
+```
+
+
+
+
+
+
